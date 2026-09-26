@@ -403,7 +403,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   /* ---------------- constants ---------------- */
   // Bump this on every delivered change -- shown as a tiny footer stamp so it's easy to
   // confirm which build is actually live after a redeploy (see BUILD_VERSION usage in render()).
-  var BUILD_VERSION = 'build 2026-09-26-6';
+  var BUILD_VERSION = 'build 2026-09-26-7';
   var POLL_MS = 1800;
   var NEXT_ROUND_DELAY = 20000;
   var TURN_SECONDS = 60;
@@ -433,7 +433,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   var bidTarget = null; // id of the neighbor chosen to receive the next bid (null = not chosen yet)
   var bidZaiToggle = false; // whether the current bidder is declaring/breaking Zai on this bid
 
-  var flags = { rolledRound: -1, revealRound: -1, scheduledNext: -1, rollingAnim:false, revealAnim:false, timeoutAttempt:null, botAttempted:{} };
+  var flags = { rolledRound: -1, revealRound: -1, scheduledNext: -1, rollingAnim:false, revealAnim:false, timeoutAttempt:null, botAttempted:{}, seenBidKey: undefined };
 
   /* ---------------- storage helpers (talks to the local Python server on this same machine) ---------------- */
   function clone(x){ return x ? JSON.parse(JSON.stringify(x)) : x; }
@@ -1206,11 +1206,21 @@ INDEX_HTML = r"""<!DOCTYPE html>
     if (r.phase === 'bidding'){
       var cur = r.currentBid;
       var total = totalDiceInPlay(r);
-      if (cur){
-        if (bidQty <= cur.quantity && bidFace <= cur.face) { bidQty = cur.quantity + 1; bidFace = 2; bidZaiToggle = false; }
-      } else {
-        var openMin = openingMinQty(r.seating.length, bidFace, bidZaiToggle);
-        if (bidQty < openMin) bidQty = openMin;
+      // Only auto-suggest a fresh qty/face (and clear the Zai checkbox) the FIRST time we
+      // see this particular bid -- not on every poll. Polling fires every ~1.8s while
+      // someone is still choosing their bid, and re-running this unconditionally used to
+      // stomp on a deliberate choice mid-selection -- e.g. picking the exact same
+      // quantity+face as the current bid to declare Zai got silently reset back to the
+      // default suggestion (and the Zai checkbox un-ticked) before they could hit "Place bid".
+      var curBidKey = cur ? (r.round + ':' + cur.quantity + 'x' + cur.face + ':' + cur.by) : null;
+      if (flags.seenBidKey !== curBidKey){
+        flags.seenBidKey = curBidKey;
+        if (cur){
+          bidQty = cur.quantity + 1; bidFace = 2; bidZaiToggle = false;
+        } else {
+          var openMin = openingMinQty(r.seating.length, bidFace, bidZaiToggle);
+          if (bidQty < openMin) bidQty = openMin;
+        }
       }
       if (bidQty < 1) bidQty = 1;
       if (bidQty > total) bidQty = total;
