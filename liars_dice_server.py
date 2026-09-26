@@ -257,7 +257,14 @@ INDEX_HTML = r"""<!DOCTYPE html>
     font-weight:800; font-size:0.85rem; box-shadow:0 4px 12px rgba(255,79,163,0.35);
   }
   .table-center .center-stake.hot{ background:linear-gradient(90deg, var(--danger), var(--pink)); animation:pulseGlow 1s ease-in-out infinite; }
-  .table-center .center-zai{ margin-top:6px; font-size:0.68rem; letter-spacing:0.5px; color:var(--danger-bright); font-weight:800; }
+  .table-center .center-zai{
+    display:inline-block; margin-top:6px; padding:4px 13px; border-radius:20px;
+    background:linear-gradient(90deg, var(--danger), var(--purple)); color:#fff;
+    font-size:0.74rem; letter-spacing:0.3px; font-weight:800;
+    box-shadow:0 4px 14px rgba(255,77,109,0.45);
+    animation: pulseGlow 1.3s ease-in-out infinite;
+  }
+  body.is-game .table-center .center-zai{ padding:3px 10px; font-size:0.66rem; margin-top:4px; }
   .seat{
     position:absolute; transform:translate(-50%,-50%); width:84px; text-align:center;
   }
@@ -344,8 +351,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     text-align:center; padding:26px 18px; border-radius:26px; margin-bottom:16px; border:3px solid var(--line);
     animation: popIn 0.45s cubic-bezier(.34,1.56,.64,1);
   }
-  .result-banner.true{ border-color:var(--teal); background:linear-gradient(160deg, rgba(45,235,196,0.28), rgba(45,235,196,0.06)); box-shadow:0 0 0 6px rgba(45,235,196,0.10), 0 12px 30px rgba(45,235,196,0.18); }
-  .result-banner.false{ border-color:var(--pink); background:linear-gradient(160deg, rgba(255,79,163,0.28), rgba(255,77,109,0.08)); box-shadow:0 0 0 6px rgba(255,79,163,0.10), 0 12px 30px rgba(255,79,163,0.18); }
+  .result-banner.win{ border-color:var(--teal); background:linear-gradient(160deg, rgba(45,235,196,0.34), rgba(45,235,196,0.08)); box-shadow:0 0 0 6px rgba(45,235,196,0.14), 0 12px 30px rgba(45,235,196,0.22); }
+  .result-banner.lose{ border-color:var(--danger); background:linear-gradient(160deg, rgba(255,77,109,0.34), rgba(255,77,109,0.08)); box-shadow:0 0 0 6px rgba(255,77,109,0.14), 0 12px 30px rgba(255,77,109,0.22); }
+  .result-banner.neutral{ border-color:var(--purple); background:linear-gradient(160deg, rgba(139,92,246,0.26), rgba(139,92,246,0.06)); box-shadow:0 0 0 6px rgba(139,92,246,0.10), 0 12px 30px rgba(139,92,246,0.18); }
+  .result-banner.win .sub{ color:var(--teal-bright); }
+  .result-banner.lose .sub{ color:var(--danger-bright); }
   .result-banner .big-emoji{ font-size:3.2rem; line-height:1; margin-bottom:6px; }
   .result-banner .count-line{ font-family:'Baloo 2', sans-serif; font-size:1.15rem; color:var(--muted); margin-bottom:6px; font-weight:700; }
   body.is-game .result-banner{ padding:16px 14px; margin-bottom:8px; border-radius:20px; }
@@ -406,6 +416,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   var myDice = [];
   var errorMsg = '';
   var showRules = false;
+  var showManagePlayers = false;
   var pollTimer = null;
   var tickTimer = null;
   var landingPollTimer = null;
@@ -483,8 +494,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
       seating:[], currentActor:null, lastFrom:null, currentBid:null, zaiActive:false,
       round:0, rolledPlayers:[], reveal:{}, challenge:null, lastResult:null,
       winner:null, log:['Table created by ' + hostName + '.'],
-      settings: { fanPiEnabled: true, unlimitedTime: false, autoNextRound: true },
-      spectators: []
+      settings: { fanPiEnabled: true, unlimitedTime: false, hostOnlyNextRound: true },
+      spectators: [], waitingPlayers: []
     };
     try{
       var res = await fetch('/api/room/' + encodeURIComponent(code) + '/create', {
@@ -546,6 +557,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
       top: (50 + ry*Math.sin(angle)).toFixed(1) + '%'
     };
   }
+  // House rule: every complete group of 5 matching dice (real matches + wild Aces
+  // combined) earns a bonus of +1 to the counted total -- so 5 counts as 6, and
+  // 6 counts as 7 (one bonus from the first completed group of 5).
+  function applyCountBonus(n){ return n + Math.floor(n / 5); }
   function totalDiceInPlay(r){
     return r.players.filter(function(p){ return p.alive; }).reduce(function(s,p){ return s+p.diceCount; }, 0);
   }
@@ -580,7 +595,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var total = totalDiceInPlay(r);
     var otherDice = total - bot.diceCount;
     var p = pMatchFor(cur.face, wasZaiActive);
-    var expectedTotal = selfCount + otherDice*p;
+    var expectedTotal = applyCountBonus(selfCount + otherDice*p);
     var ratio = cur.quantity > 0 ? expectedTotal / cur.quantity : 2;
     var rnd = Math.random();
     var wantsChallenge = ratio < 0.75 ? (rnd < 0.8) : (ratio <= 1.3 ? (rnd < 0.25) : (rnd < 0.1));
@@ -623,7 +638,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var total = totalDiceInPlay(r);
     var otherDice = bidder ? (total - bidder.diceCount) : total;
     var p = pMatchFor(face, zaiActive);
-    var ratio = qty > 0 ? (selfCount + otherDice*p) / qty : 2;
+    var ratio = qty > 0 ? applyCountBonus(selfCount + otherDice*p) / qty : 2;
     return ratio > 1.2 && Math.random() < 0.35;
   }
 
@@ -673,12 +688,38 @@ INDEX_HTML = r"""<!DOCTYPE html>
     return mutate(roomCode, function(draft){
       if (!draft) return null;
       if (draft.players.find(function(p){ return p.id===myId; })) return draft;
-      if (draft.phase !== 'lobby') return null;
-      if (draft.players.length >= SEAT_COUNT) return null;
-      draft.players.push({ id: myId, name: myName, diceCount:5, alive:true, drinks:0, seat:null });
-      draft.log.push(myName + ' joined the table.');
+      if (!draft.waitingPlayers) draft.waitingPlayers = [];
+      if (draft.waitingPlayers.find(function(w){ return w.id===myId; })) return draft;
+      var seatsUsed = draft.players.length + draft.waitingPlayers.length;
+      if (seatsUsed >= SEAT_COUNT) return null;
+      if (draft.phase === 'lobby'){
+        draft.players.push({ id: myId, name: myName, diceCount:5, alive:true, drinks:0, seat:null });
+        draft.log.push(myName + ' joined the table.');
+      } else {
+        // Game already running -- queue them up. They pick a seat and are folded into
+        // the table (and dealt in) at the start of the next round.
+        draft.waitingPlayers.push({ id: myId, name: myName, seat: null });
+        draft.log.push(myName + ' joined and will take a seat for the next round.');
+      }
       // If they were spectating this same table, drop that entry now that they're playing.
       draft.spectators = (draft.spectators || []).filter(function(s){ return s.id !== myId; });
+      return draft;
+    });
+  }
+
+  // Mid-game joiners pick a seat while the current round plays out; they're folded into
+  // the table (added to draft.players + seating) at the start of the next round.
+  function mTakeWaitingSeat(seatIndex){
+    return mutate(roomCode, function(draft){
+      if (!draft || draft.phase === 'lobby') return null;
+      if (seatIndex < 0 || seatIndex >= SEAT_COUNT) return null;
+      if (!draft.waitingPlayers) draft.waitingPlayers = [];
+      var me = draft.waitingPlayers.find(function(w){ return w.id===myId; });
+      if (!me) return null;
+      var takenByPlayer = draft.players.some(function(p){ return p.seat===seatIndex; });
+      var takenByWaiting = draft.waitingPlayers.some(function(w){ return w.id!==myId && w.seat===seatIndex; });
+      if (takenByPlayer || takenByWaiting) return null;
+      me.seat = seatIndex;
       return draft;
     });
   }
@@ -745,6 +786,58 @@ INDEX_HTML = r"""<!DOCTYPE html>
       var name = draft.players[idx].name;
       draft.players.splice(idx, 1);
       draft.log.push(name + ' (bot) was removed.');
+      return draft;
+    });
+  }
+
+  // Host-only removal of any player (human or bot), in the lobby or mid-game -- the tool
+  // for booting someone who's gone idle. In the lobby this is a plain removal. Mid-game,
+  // fiddling with whose turn it is / who the neighbors are gets fragile fast, so instead
+  // we just restart the current round fresh for everyone still seated (or fall back to
+  // the lobby entirely if that leaves fewer than 2 players).
+  function mKickPlayer(playerId){
+    return mutate(roomCode, function(draft){
+      if (!draft) return null;
+      if (draft.hostId !== myId) return null;
+      if (playerId === myId) return null; // host can't kick themselves
+      var idx = draft.players.findIndex(function(p){ return p.id === playerId; });
+      if (idx === -1){
+        // Not seated in the current round -- maybe they're queued to join next round.
+        var wIdx = (draft.waitingPlayers || []).findIndex(function(w){ return w.id === playerId; });
+        if (wIdx === -1) return null;
+        var droppedWaiting = draft.waitingPlayers[wIdx];
+        draft.waitingPlayers.splice(wIdx, 1);
+        draft.log.push(droppedWaiting.name + ' was removed from the join queue by the host.');
+        return draft;
+      }
+      var kicked = draft.players[idx];
+      draft.players.splice(idx, 1);
+      if (draft.spectators) draft.spectators = draft.spectators.filter(function(s){ return s.id !== playerId; });
+      draft.log.push(kicked.name + ' was removed from the table by the host.');
+
+      if (draft.phase === 'lobby') return draft;
+
+      if (draft.players.length < 2){
+        resetToLobbyDraft(draft);
+        draft.log.push('Not enough players left — table reset to the lobby.');
+        return draft;
+      }
+
+      // Mid-round: restart the round cleanly rather than trying to patch turn order,
+      // targets and reveals around the gap the removed player leaves behind.
+      draft.seating = (draft.seating || []).filter(function(id){ return id !== playerId; });
+      draft.players.forEach(function(p){ p.dice = null; });
+      draft.currentActor = draft.seating[0] || null;
+      draft.lastFrom = null;
+      draft.currentBid = null;
+      draft.zaiActive = false;
+      draft.rolledPlayers = [];
+      draft.reveal = {};
+      draft.challenge = null;
+      draft.lastResult = null;
+      draft.phase = 'rolling';
+      draft.turnDeadline = null;
+      draft.log.push('Round ' + draft.round + ' restarts — everyone still at the table rerolls.');
       return draft;
     });
   }
@@ -839,6 +932,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
       var effectiveToggleZai = face === 1 ? !wasZaiActive : !!toggleZai;
       var breakingZai = wasZaiActive && effectiveToggleZai;
 
+      // Declaring Zai fresh (off -> on) tightens the bid's own rules -- 1s stop being wild
+      // -- so it's allowed to repeat the exact same quantity and face as the current bid
+      // (or raise either), even though that would otherwise be "no raise at all".
+      var declaringZaiFresh = !wasZaiActive && effectiveToggleZai;
+
       if (face < 1 || face > 6) return null;
       if (draft.currentBid){
         if (breakingZai){
@@ -846,6 +944,10 @@ INDEX_HTML = r"""<!DOCTYPE html>
           if (qty < minQty) return null;
         } else if (isReverse){
           if (qty < draft.currentBid.quantity + 2) return null;
+        } else if (declaringZaiFresh){
+          var samePlusHigher = qty > draft.currentBid.quantity ||
+            (qty === draft.currentBid.quantity && faceRank(face) >= faceRank(draft.currentBid.face));
+          if (!samePlusHigher) return null;
         } else {
           if (!isValidBid(draft.currentBid, { quantity: qty, face: face })) return null;
         }
@@ -882,18 +984,22 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var face = draft.challenge.bid.face, qty = draft.challenge.bid.quantity;
     var multiplier = draft.challenge.multiplier || 1;
     var zaiWasActive = !!draft.challenge.zaiActive;
-    var count = 0;
+    var rawCount = 0;
     aliveIds.forEach(function(id){
       draft.reveal[id].forEach(function(d){
-        if (d === face || (!zaiWasActive && face !== 1 && d === 1)) count++;
+        if (d === face || (!zaiWasActive && face !== 1 && d === 1)) rawCount++;
       });
     });
+    var count = applyCountBonus(rawCount);
+    var bonus = count - rawCount;
     var bidTrue = count >= qty;
     var loserId = bidTrue ? draft.challenge.challengerId : draft.challenge.bidderId;
+    var winnerId = bidTrue ? draft.challenge.bidderId : draft.challenge.challengerId;
     var loser = draft.players.find(function(p){ return p.id===loserId; });
+    var winner = draft.players.find(function(p){ return p.id===winnerId; });
     loser.drinks = (loser.drinks || 0) + multiplier;
-    draft.lastResult = { count:count, quantity:qty, face:face, bidTrue:bidTrue, loserId:loserId, loserName:loser.name, multiplier:multiplier, zaiActive:zaiWasActive };
-    draft.log.push('Count of ' + faceLabel(face) + 's (' + (zaiWasActive ? 'Zai \u2014 1s don\u2019t count' : 'wild Aces included') + ') = ' + count + ' vs bid ' + qty + '. ' + (bidTrue ? 'Bid holds \u2014 ' : 'Bluff caught \u2014 ') + loser.name + ' drinks ' + multiplier + (multiplier===1?'':'\u00d7') + '!');
+    draft.lastResult = { count:count, rawCount:rawCount, bonus:bonus, quantity:qty, face:face, bidTrue:bidTrue, loserId:loserId, loserName:loser.name, winnerId:winnerId, winnerName: winner ? winner.name : '???', multiplier:multiplier, zaiActive:zaiWasActive };
+    draft.log.push('Count of ' + faceLabel(face) + 's (' + (zaiWasActive ? 'Zai \u2014 1s don\u2019t count' : 'wild Aces included') + ') = ' + rawCount + (bonus ? (' + ' + bonus + ' bonus = ' + count) : '') + ' vs bid ' + qty + '. ' + (bidTrue ? 'Bid holds \u2014 ' : 'Bluff caught \u2014 ') + loser.name + ' drinks ' + multiplier + (multiplier===1?'':'\u00d7') + '!');
     draft.phase = 'roundend';
   }
 
@@ -1003,6 +1109,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
     return mutate(roomCode, function(draft){
       if (!draft || draft.phase !== 'roundend') return null;
       var loserId = draft.lastResult.loserId;
+      // Fold in any mid-game joiners who grabbed a seat while this round was playing --
+      // they're dealt into the table starting this new round. Anyone who joined but never
+      // picked a seat stays queued and gets another chance next round.
+      var joiners = (draft.waitingPlayers || []).filter(function(w){ return w.seat !== null && w.seat !== undefined; });
+      if (joiners.length){
+        joiners.forEach(function(w){
+          draft.players.push({ id: w.id, name: w.name, diceCount:5, alive:true, drinks:0, seat: w.seat, dice:null });
+          draft.log.push(w.name + ' takes a seat and joins the table.');
+        });
+        draft.waitingPlayers = (draft.waitingPlayers || []).filter(function(w){ return w.seat === null || w.seat === undefined; });
+        draft.seating = draft.players.slice().sort(function(a,b){ return a.seat - b.seat; }).map(function(p){ return p.id; });
+      }
       draft.currentActor = loserId;
       draft.lastFrom = null;
       draft.currentBid = null;
@@ -1038,6 +1156,14 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
   function resetToLobbyDraft(draft){
     draft.phase = 'lobby';
+    // Anyone still queued to join gets folded into the regular player list now that
+    // we're back in the lobby (where everyone picks/re-picks a seat anyway).
+    (draft.waitingPlayers || []).forEach(function(w){
+      if (!draft.players.some(function(p){ return p.id === w.id; })){
+        draft.players.push({ id: w.id, name: w.name, diceCount:5, alive:true, drinks:0, seat: w.seat });
+      }
+    });
+    draft.waitingPlayers = [];
     draft.players.forEach(function(p){ p.diceCount=5; p.alive=true; p.drinks=0; });
     draft.seating = []; draft.currentActor = null; draft.lastFrom = null;
     draft.currentBid = null; draft.zaiActive = false; draft.round = 0; draft.rolledPlayers = [];
@@ -1047,6 +1173,16 @@ INDEX_HTML = r"""<!DOCTYPE html>
   /* ---------------- side-effect reactions on new room state ---------------- */
   function reactToRoom(r){
     if (!r) return;
+    // If the host kicked us, we won't be in the players list anymore -- bounce back to
+    // the landing page instead of sitting on a table we're no longer part of.
+    if (view !== 'landing' && myRole === 'player' && !r.players.some(function(p){ return p.id===myId; }) && !(r.waitingPlayers||[]).some(function(w){ return w.id===myId; })){
+      stopPolling();
+      view = 'landing'; room = null; roomCode = ''; myRole = 'player';
+      errorMsg = 'You were removed from the table by the host.';
+      render();
+      startLandingPoll();
+      return;
+    }
     var me = r.players.find(function(p){ return p.id===myId; });
     if (r.phase === 'rolling' && me && me.alive && r.rolledPlayers.indexOf(myId) === -1 && flags.rolledRound !== r.round){
       flags.rolledRound = r.round;
@@ -1061,8 +1197,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
     }
     if (r.phase === 'roundend' && flags.scheduledNext !== r.round){
       flags.scheduledNext = r.round;
-      var autoOn = !r.settings || r.settings.autoNextRound !== false;
-      if (autoOn) setTimeout(function(){ mNextRound(); }, NEXT_ROUND_DELAY);
+      var hostOnlyNext = !r.settings || r.settings.hostOnlyNextRound !== false;
+      if (!hostOnlyNext) setTimeout(function(){ mNextRound(); }, NEXT_ROUND_DELAY);
     }
     if (r.phase === 'bidding'){
       var cur = r.currentBid;
@@ -1293,14 +1429,16 @@ INDEX_HTML = r"""<!DOCTYPE html>
     } else {
       listHtml = roomList.map(function(t){
         var statusLabel = t.phase === 'lobby' ? 'Waiting for players' : ('In progress \u2014 round ' + t.round);
-        var actionLabel = t.phase === 'lobby' ? 'Join' : 'Watch';
-        var action = t.phase === 'lobby' ? 'browse-join' : 'browse-spectate';
+        var buttons = t.phase === 'lobby' ?
+          ('<button class="btn-secondary" data-action="browse-join" data-code="' + esc(t.code) + '">Join</button>') :
+          ('<button class="btn-ghost" data-action="browse-spectate" data-code="' + esc(t.code) + '" style="margin-right:4px;">Watch</button>' +
+           '<button class="btn-secondary" data-action="browse-join" data-code="' + esc(t.code) + '">Join next round</button>');
         return '<div class="table-row">' +
           '<div class="table-row-info">' +
             '<div class="table-row-title">' + esc(t.hostName) + '\u2019s table</div>' +
             '<div class="table-row-sub">' + statusLabel + ' \u2022 ' + t.playerCount + ' player' + (t.playerCount===1?'':'s') + (t.spectatorCount ? ' \u2022 ' + t.spectatorCount + ' watching' : '') + '</div>' +
           '</div>' +
-          '<button class="btn-secondary" data-action="' + action + '" data-code="' + esc(t.code) + '">' + actionLabel + '</button>' +
+          buttons +
         '</div>';
       }).join('');
     }
@@ -1345,6 +1483,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
             (occ.id===r.hostId ? '<div class="seat-tag">HOST</div>' : '') +
             (occ.id===myId ? '<div class="seat-tag">YOU</div>' : '') +
             (occ.isBot && isHost ? '<button class="btn-ghost" style="padding:2px;font-size:0.62rem;" data-action="remove-bot" data-id="' + esc(occ.id) + '">remove</button>' : '') +
+            (!occ.isBot && isHost && occ.id !== myId ? '<button class="btn-ghost" style="padding:2px;font-size:0.62rem;" data-action="kick-player" data-id="' + esc(occ.id) + '" data-name="' + esc(occ.name) + '">kick</button>' : '') +
           '</div>' +
         '</div>';
       } else {
@@ -1371,7 +1510,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var settings = r.settings || { fanPiEnabled: true };
     var fanPiOn = settings.fanPiEnabled !== false;
     var unlimitedTimeOn = !!settings.unlimitedTime;
-    var autoNextOn = settings.autoNextRound !== false;
+    var hostOnlyNextOn = settings.hostOnlyNextRound !== false;
     var tableFull = r.players.length >= SEAT_COUNT;
     var spectators = r.spectators || [];
     return '' +
@@ -1394,8 +1533,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
           '<span><strong>Unlimited thinking time</strong> \u2014 turn off the 60-second timer entirely' + (isHost?'':' (host only)') + '</span>' +
         '</label>' +
         '<label class="setting-row" style="' + (isHost?'cursor:pointer;':'opacity:0.7;') + '">' +
-          '<input type="checkbox" ' + (autoNextOn?'checked':'') + (isHost?' data-action="toggle-auto-next"':' disabled') + '>' +
-          '<span><strong>Auto-start next round</strong> \u2014 automatically continue after each reveal instead of waiting for the host' + (isHost?'':' (host only)') + '</span>' +
+          '<input type="checkbox" ' + (hostOnlyNextOn?'checked':'') + (isHost?' data-action="toggle-host-only-next"':' disabled') + '>' +
+          '<span><strong>Only host can start next round</strong> \u2014 turn this off to auto-advance on a 20-second timer instead' + (isHost?'':' (host only)') + '</span>' +
         '</label>' +
       '</div>' +
       '<div class="panel">' +
@@ -1443,19 +1582,80 @@ INDEX_HTML = r"""<!DOCTYPE html>
           '<div class="center-label">Round ' + r.round + '</div>' +
           '<div class="center-bid">' + esc(centerBidText) + '</div>' +
           '<div class="' + stakeClass + '">' + mult + ' mouth' + (mult===1?'':'s') + '</div>' +
-          (zaiForDisplay ? '<div class="center-zai">ZAI \u2014 1s don\u2019t count</div>' : '') +
+          (zaiForDisplay ? '<div class="center-zai">\ud83d\udd12 ZAI ACTIVE \u2014 Aces don\u2019t count</div>' : '') +
         '</div>' +
         seatsHtml +
       '</div>';
   }
 
+  // Host-only panel to remove an idle player mid-game -- kept collapsed by default so it
+  // doesn't eat into the compact phone layout when nobody needs it.
+  function managePlayersHTML(r){
+    var others = r.players.filter(function(p){ return p.id !== r.hostId; });
+    var waiting = r.waitingPlayers || [];
+    if (!others.length && !waiting.length) return '<div class="panel" style="padding:10px 14px;"><div class="hint" style="margin:0;">No one else at the table yet.</div></div>';
+    return '<div class="panel" style="padding:10px 14px;">' +
+      others.map(function(p){
+        return '<div class="table-row" style="padding:7px 4px;">' +
+          '<div class="table-row-title" style="font-size:0.85rem;">' + esc(p.name) + (p.isBot ? ' 🤖' : '') + '</div>' +
+          '<button class="btn-ghost" data-action="kick-player" data-id="' + esc(p.id) + '" data-name="' + esc(p.name) + '">remove</button>' +
+        '</div>';
+      }).join('') +
+      waiting.map(function(w){
+        return '<div class="table-row" style="padding:7px 4px;">' +
+          '<div class="table-row-title" style="font-size:0.85rem;">' + esc(w.name) + ' (joining next round)</div>' +
+          '<button class="btn-ghost" data-action="kick-player" data-id="' + esc(w.id) + '" data-name="' + esc(w.name) + '">remove</button>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+
+  // Someone who joined mid-game: not seated in the running round, but queued to pick a
+  // seat and be dealt into the table once the current round finishes.
+  function waitingToJoinHTML(r, waitingMe){
+    var html = gameTableHTML(r);
+    var takenSeats = {};
+    r.players.forEach(function(p){ if (p.seat !== null && p.seat !== undefined) takenSeats[p.seat] = true; });
+    (r.waitingPlayers || []).forEach(function(w){ if (w.seat !== null && w.seat !== undefined) takenSeats[w.seat] = true; });
+    var hasSeat = waitingMe.seat !== null && waitingMe.seat !== undefined;
+    var seatButtons = '';
+    for (var i=0;i<SEAT_COUNT;i++){
+      if (takenSeats[i] && waitingMe.seat !== i) continue;
+      var mine = waitingMe.seat === i;
+      seatButtons += '<button class="' + (mine ? 'btn-primary' : 'btn-secondary') + '" style="margin:3px;"' +
+        (mine ? ' disabled' : ' data-action="take-waiting-seat" data-seat="' + i + '"') + '>' +
+        (mine ? '\u2713 Seat ' + (i+1) : 'Seat ' + (i+1)) + '</button>';
+    }
+    var others = (r.waitingPlayers || []).filter(function(w){ return w.id !== myId; });
+    html += '<div class="panel" style="text-align:center;">' +
+      (hasSeat ?
+        '<div style="margin-bottom:10px;color:var(--teal-bright);font-weight:700;">\u2705 You\u2019re seated \u2014 you\u2019ll join the table for the next round!</div>' :
+        '<div style="margin-bottom:10px;color:var(--cream);font-weight:700;">\uD83E\uDE91 Grab a seat below \u2014 you\u2019ll join the table at the start of the next round.</div>'
+      ) +
+      '<div>' + seatButtons + '</div>' +
+      (others.length ? ('<div class="hint" style="margin-top:10px;">Also waiting to join: ' + others.map(function(w){ return esc(w.name) + ((w.seat!==null && w.seat!==undefined) ? ' \u2705' : ''); }).join(', ') + '</div>') : '') +
+    '</div>';
+    html += logHTML(r);
+    return html;
+  }
+
   function gameHTML(r){
     if (r.phase === 'gameover') return gameOverHTML(r);
     var me = r.players.find(function(p){ return p.id===myId; });
+    var waitingMe = (r.waitingPlayers || []).find(function(w){ return w.id===myId; });
     var isMyTurn = (r.phase === 'bidding') && r.currentActor === myId;
 
+    var isHostInGame = r.hostId === myId;
     var html = '';
-    html += '<div class="hud"><span class="round">Round ' + r.round + '</span><span class="code-mini">' + esc(r.code) + '</span></div>';
+    html += '<div class="hud"><span class="round">Round ' + r.round + '</span>' +
+      (isHostInGame ? '<button class="btn-ghost" data-action="toggle-manage" style="padding:2px;">\u2699\uFE0F Players</button>' : '') +
+      '<span class="code-mini">' + esc(r.code) + '</span></div>';
+    if (isHostInGame && showManagePlayers) html += managePlayersHTML(r);
+    var waitingList = r.waitingPlayers || [];
+    if (waitingList.length){
+      html += '<div class="hint" style="margin:2px 0 8px;">\uD83D\uDE4B Waiting to join next round: ' + waitingList.map(function(w){ return esc(w.name) + ((w.seat!==null && w.seat!==undefined) ? ' \u2705' : ''); }).join(', ') + '</div>';
+    }
+    if (waitingMe) return html + waitingToJoinHTML(r, waitingMe);
     if (!me){ html += '<div class="turn-banner theirs">\uD83D\uDC40 You\u2019re spectating</div>'; }
 
     html += gameTableHTML(r);
@@ -1488,6 +1688,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
         var isReverseChoice = showPicker && r.lastFrom !== null && bidTarget === r.lastFrom;
         var wasZaiActive = !!r.zaiActive;
         var breakingZai = wasZaiActive && bidZaiToggle;
+        // Declaring Zai fresh tightens the bid's own rules (1s stop being wild), so it's
+        // allowed to repeat the current bid's exact quantity and face, or raise either.
+        var declaringZaiFresh = !wasZaiActive && bidZaiToggle;
         var proposed = { quantity: bidQty, face: bidFace };
         var valid;
         var zaiMinQty = null;
@@ -1499,6 +1702,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
           valid = bidQty >= r.currentBid.quantity + 2;
         } else if (!r.currentBid){
           valid = bidQty >= openMinQty;
+        } else if (r.currentBid && declaringZaiFresh){
+          valid = bidQty > r.currentBid.quantity ||
+            (bidQty === r.currentBid.quantity && faceRank(bidFace) >= faceRank(r.currentBid.face));
         } else {
           valid = isValidBid(r.currentBid, proposed);
         }
@@ -1564,8 +1770,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
             '</div>') : ''
           ) +
           (!valid && !r.currentBid ? '<div class="hint bad">Opening bid must be at least ' + openMinQty + ' \u00d7 ' + (bidFace===1?'Aces':bidFace) + (bidZaiToggle?' (Zai)':'') + ' with ' + r.seating.length + ' players.</div>' : '') +
-          (!valid && r.currentBid && !isReverseChoice && !breakingZai ? '<div class="hint bad">Must beat ' + describeBid(r.currentBid.quantity,r.currentBid.face) + '</div>' : '') +
-          (valid && !isReverseChoice && !breakingZai ? ('<div class="hint">' + (bidFace === 1 ? 'Calling Aces \u2014 only real 1s count.' : (wasZaiActive ? 'Zai is active \u2014 Aces (1s) don\u2019t count right now.' : 'Aces (1s) are wild and always count.')) + '</div>') : '') +
+          (!valid && r.currentBid && !isReverseChoice && !breakingZai ?
+            ('<div class="hint bad">' + (declaringZaiFresh ? ('Declaring Zai still needs at least ' + describeBid(r.currentBid.quantity,r.currentBid.face) + '.') : ('Must beat ' + describeBid(r.currentBid.quantity,r.currentBid.face) + '.')) + '</div>') : '') +
+          (valid && r.currentBid && declaringZaiFresh && bidQty === r.currentBid.quantity && bidFace === r.currentBid.face ?
+            '<div class="hint">Repeating the bid under Zai \u2014 1s stop being wild from here.</div>' :
+          valid && !isReverseChoice && !breakingZai ? ('<div class="hint">' + (bidFace === 1 ? 'Calling Aces \u2014 only real 1s count.' : (wasZaiActive ? 'Zai is active \u2014 Aces (1s) don\u2019t count right now.' : 'Aces (1s) are wild and always count.')) + '</div>') : '') +
         '</div>';
       } else {
         html += '<div class="panel" style="text-align:center;color:var(--muted);font-size:0.88rem;">Waiting for ' + esc(nameOf(r, r.currentActor)) + '\u2026</div>';
@@ -1619,14 +1828,21 @@ INDEX_HTML = r"""<!DOCTYPE html>
     if (r.phase === 'roundend'){
       var lr = r.lastResult;
       var mult = lr.multiplier || 1;
-      var isMe = lr.loserId === myId;
+      var isMeLoser = lr.loserId === myId;
+      var isMeWinner = lr.winnerId === myId;
       var mouthWord = mult === 1 ? '1 mouthful' : (mult + ' mouthfuls');
-      var headline = isMe ?
-        ('<strong>YOU</strong> drink ' + mouthWord + '!') :
-        (esc(lr.loserName) + ' drinks <strong>' + mouthWord + '</strong>!');
-      html += '<div class="result-banner ' + (lr.bidTrue?'true':'false') + '">' +
-        '<div class="big-emoji">' + (lr.bidTrue ? '\u2705' : '\uD83E\uDD25') + '</div>' +
-        '<div class="count-line">' + (lr.bidTrue ? 'Bid held true' : 'Caught the bluff') + ' \u2014 ' + faceLabel(lr.face) + 's counted: ' + lr.count + ' (bid was ' + lr.quantity + ')</div>' +
+      var bannerClass = isMeWinner ? 'win' : (isMeLoser ? 'lose' : 'neutral');
+      var headline;
+      if (isMeWinner){
+        headline = '<strong>YOU WON!</strong> ' + esc(lr.loserName) + ' drinks ' + mouthWord + '!';
+      } else if (isMeLoser){
+        headline = '<strong>YOU LOST</strong> \u2014 drink ' + mouthWord + '!';
+      } else {
+        headline = '<strong>' + esc(lr.winnerName) + ' Won!</strong> ' + esc(lr.loserName) + ' drinks ' + mouthWord + '!';
+      }
+      html += '<div class="result-banner ' + bannerClass + '">' +
+        '<div class="big-emoji">' + (isMeWinner ? '\uD83C\uDF89' : (isMeLoser ? '\uD83D\uDE25' : (lr.bidTrue ? '\u2705' : '\uD83E\uDD25'))) + '</div>' +
+        '<div class="count-line">' + (lr.bidTrue ? 'Bid held true' : 'Caught the bluff') + ' \u2014 ' + faceLabel(lr.face) + 's counted: ' + lr.count + (lr.bonus ? (' (' + lr.rawCount + ' + ' + lr.bonus + ' bonus)') : '') + ' (bid was ' + lr.quantity + ')</div>' +
         '<div class="sub">' + headline + ' \uD83C\uDF7A</div>' +
       '</div>';
       html += '<div class="reveal-list">';
@@ -1638,12 +1854,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
       html += '</div>';
       html += logHTML(r);
       var isHostHere = r.hostId === myId;
-      var autoNextOn2 = !r.settings || r.settings.autoNextRound !== false;
+      var hostOnlyNext2 = !r.settings || r.settings.hostOnlyNextRound !== false;
       html += '<div class="panel" style="text-align:center;">' +
-        '<div style="color:var(--muted);font-size:0.85rem;margin-bottom:10px;">' + (autoNextOn2 ? 'Next round starting soon\u2026' : 'Waiting for the host to continue\u2026') + '</div>' +
+        '<div style="color:var(--muted);font-size:0.85rem;margin-bottom:10px;">' + (hostOnlyNext2 ? 'Waiting for the host to continue\u2026' : 'Next round starting soon\u2026') + '</div>' +
         (isHostHere ?
           '<button class="btn-secondary" data-action="continue-now">Start next game</button>' :
-          ('<div style="color:var(--muted);font-size:0.8rem;">' + (autoNextOn2 ? 'Waiting for the host, or the timer\u2026' : 'Waiting for the host\u2026') + '</div>')
+          ('<div style="color:var(--muted);font-size:0.8rem;">' + (hostOnlyNext2 ? 'Waiting for the host\u2026' : 'Waiting for the host, or the timer\u2026') + '</div>')
         ) +
       '</div>';
       return html;
@@ -1694,7 +1910,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
           '<h3>Aces are wild</h3>' +
           '<p>Rolled 1s (Aces) count toward any face bid, unless the bid itself is on Aces \u2014 then only actual 1s count.</p>' +
           '<h3>Zai (turning off wild Aces)</h3>' +
-          '<p>Any bidder can declare <strong>Zai</strong> on their bid \u2014 from then on, 1s stop being wild and only count for actual Ace bids, until someone breaks it. Breaking Zai (bringing wild Aces back) needs a bid of at least <strong>double</strong> the current quantity. If you\u2019re also reversing direction, add 2 more on top of that double.</p>' +
+          '<p>Any bidder can declare <strong>Zai</strong> on their bid \u2014 from then on, 1s stop being wild and only count for actual Ace bids, until someone breaks it. Declaring Zai tightens the bid, so it\u2019s the one time you can repeat the exact same quantity and face as the current bid (or raise either) instead of having to raise outright. Breaking Zai (bringing wild Aces back) needs a bid of at least <strong>double</strong> the current quantity. If you\u2019re also reversing direction, add 2 more on top of that double.</p>' +
           '<h3>Calling Liar</h3>' +
           '<p>Instead of bidding, you can call \u201cLiar!\u201d on the previous bid. Everyone\u2019s dice are revealed and counted. If the count meets or beats the bid, the bid holds and the challenger drinks. If it falls short, the bidder was bluffing and drinks instead.</p>' +
           '<h3>PI and Fan Pi (drinking multipliers)</h3>' +
@@ -1762,14 +1978,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     roomCode = code;
     var existing = await getRoomRaw(roomCode);
     if (!existing){ errorMsg = 'No table found with that code.'; render(); return; }
-    if (existing.phase !== 'lobby' && !existing.players.find(function(p){ return p.id===myId; })){
-      errorMsg = 'That game has already started \u2014 you can watch instead from the table list.'; render(); return;
-    }
     var result = await mJoin();
-    if (!result){ errorMsg = 'Could not join that table.'; render(); return; }
+    if (!result){ errorMsg = 'Could not join that table \u2014 it may be full.'; render(); return; }
     room = result;
     myRole = 'player';
-    view = 'lobby';
+    view = result.phase === 'lobby' ? 'lobby' : 'game';
     stopLandingPoll();
     startPolling();
     render();
@@ -1823,8 +2036,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
       var seatIdx = parseInt(el.dataset.seat, 10);
       return mTakeSeat(seatIdx).then(function(r){ if (r) room = r; render(); });
     }
+    if (action === 'take-waiting-seat'){
+      var waitSeatIdx = parseInt(el.dataset.seat, 10);
+      return mTakeWaitingSeat(waitSeatIdx).then(function(r){ if (r) room = r; render(); });
+    }
     if (action === 'add-bot') return mAddBot().then(function(r){ if (r) room = r; render(); });
     if (action === 'remove-bot') return mRemoveBot(el.dataset.id).then(function(r){ if (r) room = r; render(); });
+    if (action === 'toggle-manage'){ showManagePlayers = !showManagePlayers; render(); return; }
+    if (action === 'kick-player'){
+      var kickName = el.dataset.name || 'this player';
+      if (confirm('Remove ' + kickName + ' from the table?')){
+        mKickPlayer(el.dataset.id).then(function(r){ if (r) { room = r; reactToRoom(r); } render(); });
+      }
+      return;
+    }
     if (action === 'toggle-fanpi'){
       var current = room && room.settings ? room.settings.fanPiEnabled !== false : true;
       return mUpdateSettings({ fanPiEnabled: !current }).then(function(r){ if (r) room = r; render(); });
@@ -1833,9 +2058,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
       var currentUT = room && room.settings ? !!room.settings.unlimitedTime : false;
       return mUpdateSettings({ unlimitedTime: !currentUT }).then(function(r){ if (r) room = r; render(); });
     }
-    if (action === 'toggle-auto-next'){
-      var currentAN = room && room.settings ? room.settings.autoNextRound !== false : true;
-      return mUpdateSettings({ autoNextRound: !currentAN }).then(function(r){ if (r) room = r; render(); });
+    if (action === 'toggle-host-only-next'){
+      var currentHO = room && room.settings ? room.settings.hostOnlyNextRound !== false : true;
+      return mUpdateSettings({ hostOnlyNextRound: !currentHO }).then(function(r){ if (r) room = r; render(); });
     }
     if (action === 'place-bid') return mPlaceBid(bidQty, bidFace, bidTarget, bidZaiToggle).then(function(r){ bidZaiToggle = false; if (r) { room = r; reactToRoom(r);} render(); });
     if (action === 'toggle-zai'){ bidZaiToggle = !bidZaiToggle; render(); return; }
