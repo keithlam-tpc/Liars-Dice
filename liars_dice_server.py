@@ -415,11 +415,18 @@ INDEX_HTML = r"""<!DOCTYPE html>
   /* ---------------- constants ---------------- */
   // Bump this on every delivered change -- shown as a tiny footer stamp so it's easy to
   // confirm which build is actually live after a redeploy (see BUILD_VERSION usage in render()).
-  var BUILD_VERSION = 'build 2026-09-26-10';
+  var BUILD_VERSION = 'build 2026-09-26-11';
   var POLL_MS = 1800;
   var NEXT_ROUND_DELAY = 20000;
   var TURN_SECONDS = 60;
   var SEAT_COUNT = 8;
+  // Safety net: if a human player never rolls (closed the app, phone died, or a
+  // mid-game joiner picked a seat but wasn't actually still around when the round
+  // started), the game used to be stuck on "Rolling..." forever -- nothing else ever
+  // moved it past the rolling phase. After this long without everyone rolling, any
+  // other connected player's client will auto-roll on the straggler's behalf so the
+  // round can continue.
+  var ROLL_TIMEOUT_MS = 25000;
 
   /* ---------------- session state ---------------- */
   var myId = 'p_' + Math.random().toString(36).slice(2,9);
@@ -852,6 +859,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       draft.lastResult = null;
       draft.phase = 'rolling';
       draft.turnDeadline = null;
+      draft.rollDeadline = Date.now() + ROLL_TIMEOUT_MS;
       draft.log.push('Round ' + draft.round + ' restarts — everyone still at the table rerolls.');
       return draft;
     });
@@ -875,6 +883,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       draft.lastResult = null;
       draft.winner = null;
       draft.phase = 'rolling';
+      draft.rollDeadline = Date.now() + ROLL_TIMEOUT_MS;
       draft.log = ['Round 1 — everyone rolls!'];
       return draft;
     });
@@ -892,6 +901,34 @@ INDEX_HTML = r"""<!DOCTYPE html>
       if (logLine) draft.log.push(logLine);
       draft.rolledPlayers.push(myId);
       var aliveCount = draft.players.filter(function(p){ return p.alive; }).length;
+      if (draft.rolledPlayers.length >= aliveCount){
+        draft.phase = 'bidding';
+        draft.turnDeadline = nextDeadline(draft);
+        draft.log.push('All dice rolled. ' + nameOf(draft, draft.currentActor) + ' opens the bidding.');
+      }
+      return draft;
+    });
+  }
+
+  // Safety net for a human player who never rolls -- phone died, app closed, a mid-game
+  // joiner who grabbed a seat but wasn't actually still around, etc. Without this, the
+  // round would be stuck on "Rolling..." forever, since nothing else ever moved a stalled
+  // rolling phase forward. Once ROLL_TIMEOUT_MS has passed, any OTHER connected player's
+  // client rolls on the straggler's behalf (same as how a bot's turn is handled -- see
+  // maybeActForBots), so the game can always continue.
+  function mAutoRollStuck(playerId){
+    return mutate(roomCode, function(draft){
+      if (!draft || draft.phase !== 'rolling') return null;
+      if (!draft.rollDeadline || Date.now() < draft.rollDeadline) return null;
+      var p = draft.players.find(function(pl){ return pl.id === playerId; });
+      if (!p || !p.alive) return null;
+      if (draft.rolledPlayers.indexOf(playerId) !== -1) return draft;
+      var rr = rollWithRerollRule(p.diceCount);
+      p.dice = rr.dice;
+      if (rr.penalized) p.drinks = (p.drinks || 0) + 1;
+      draft.rolledPlayers.push(playerId);
+      draft.log.push('⏱️ ' + p.name + ' didn’t roll in time and was auto-rolled.');
+      var aliveCount = draft.players.filter(function(pl){ return pl.alive; }).length;
       if (draft.rolledPlayers.length >= aliveCount){
         draft.phase = 'bidding';
         draft.turnDeadline = nextDeadline(draft);
@@ -1145,6 +1182,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       draft.challenge = null;
       draft.round += 1;
       draft.phase = 'rolling';
+      draft.rollDeadline = Date.now() + ROLL_TIMEOUT_MS;
       draft.log.push('Round ' + draft.round + ' \u2014 ' + nameOf(draft, loserId) + ' starts the bidding.');
       return draft;
     });
@@ -1273,6 +1311,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
           }
         }
       });
+      // Safety net for a human straggler who never rolls (see mAutoRollStuck) -- once the
+      // round's roll deadline has passed, any OTHER connected client rolls for them so the
+      // game doesn't sit on "Rolling..." forever.
+      if (r.rollDeadline && Date.now() >= r.rollDeadline){
+        r.players.forEach(function(p){
+          if (p.alive && p.id !== myId && r.rolledPlayers.indexOf(p.id) === -1){
+            var stuckKey = 'stuckroll:' + r.round + ':' + p.id;
+            if (!flags.botAttempted[stuckKey]){
+              flags.botAttempted[stuckKey] = true;
+              setTimeout(function(){ executeAutoRollStuck(p.id); }, 300 + Math.random()*500);
+            }
+          }
+        });
+      }
     }
     if (r.phase === 'bidding' && r.currentActor){
       var actor = r.players.find(function(p){ return p.id === r.currentActor; });
@@ -1301,6 +1353,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var fresh = await getRoomRaw(roomCode);
     if (!fresh || fresh.phase !== 'rolling' || fresh.rolledPlayers.indexOf(botId) !== -1) return;
     await mBotRoll(botId);
+    var updated = await getRoomRaw(roomCode);
+    if (updated){ room = updated; reactToRoom(updated); render(); }
+  }
+
+  async function executeAutoRollStuck(playerId){
+    var fresh = await getRoomRaw(roomCode);
+    if (!fresh || fresh.phase !== 'rolling' || fresh.rolledPlayers.indexOf(playerId) !== -1) return;
+    if (!fresh.rollDeadline || Date.now() < fresh.rollDeadline) return;
+    await mAutoRollStuck(playerId);
     var updated = await getRoomRaw(roomCode);
     if (updated){ room = updated; reactToRoom(updated); render(); }
   }
@@ -1721,9 +1782,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     html += gameTableHTML(r);
 
     if (r.phase === 'rolling'){
+      var stillRolling = r.players.filter(function(p){ return p.alive && r.rolledPlayers.indexOf(p.id) === -1; });
       html += '<div class="panel" style="text-align:center;">' +
         '<div style="color:var(--muted);margin-bottom:12px;">Rolling dice for everyone\u2026</div>' +
         (me ? '<div class="dice-row-real">' + sortedDice(myDice).map(function(d){ return dieHTML(d, flags.rollingAnim ? 'rolling' : ''); }).join('') + '</div>' : '') +
+        (stillRolling.length ? ('<div class="hint" style="margin-top:10px;">Waiting on: ' + stillRolling.map(function(p){ return esc(p.name); }).join(', ') + '</div>') : '') +
       '</div>';
       return html;
     }
