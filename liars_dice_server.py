@@ -401,6 +401,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
   "use strict";
 
   /* ---------------- constants ---------------- */
+  // Bump this on every delivered change -- shown as a tiny footer stamp so it's easy to
+  // confirm which build is actually live after a redeploy (see BUILD_VERSION usage in render()).
+  var BUILD_VERSION = 'build 2026-09-26-6';
   var POLL_MS = 1800;
   var NEXT_ROUND_DELAY = 20000;
   var TURN_SECONDS = 60;
@@ -1336,7 +1339,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
     stopLandingPoll();
     async function tick(){
       roomList = await getRoomList();
-      if (view === 'landing') render();
+      // Don't re-render (and thus rebuild the DOM) while someone's actively typing in
+      // the name/code field -- see the note on render() about why that kicks you out
+      // mid-keystroke on mobile. The list just catches up on the next render instead.
+      var active = document.activeElement;
+      var isTyping = active && TEXT_INPUT_IDS.indexOf(active.id) !== -1;
+      if (view === 'landing' && !isTyping) render();
     }
     tick();
     landingPollTimer = setInterval(tick, 2500);
@@ -1386,8 +1394,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
   }
 
   /* ---------------- render ---------------- */
+  // render() rebuilds the whole #app innerHTML from scratch every time (including on
+  // background polling ticks), which destroys and recreates any <input> in there --
+  // on mobile that drops keyboard focus and cursor position mid-keystroke, making the
+  // name/code fields feel like they "bounce you out" while typing. Capture whichever
+  // text input has focus (and its cursor position) beforehand, and restore it after.
+  var TEXT_INPUT_IDS = ['nameInput', 'codeInput'];
   function render(){
     var app = document.getElementById('app');
+    var active = document.activeElement;
+    var focusedId = (active && TEXT_INPUT_IDS.indexOf(active.id) !== -1) ? active.id : null;
+    var selStart, selEnd;
+    if (focusedId){
+      try{ selStart = active.selectionStart; selEnd = active.selectionEnd; }catch(e){}
+    }
     // Compact layout kicks in for the whole lobby/game screen (everything but the
     // landing page) so a full game view has a real shot at fitting one phone screen.
     document.body.classList.toggle('is-game', view !== 'landing');
@@ -1408,9 +1428,21 @@ INDEX_HTML = r"""<!DOCTYPE html>
     } else {
       html += '<div class="footer-link"><button class="btn-ghost" data-action="show-rules">How to play</button></div>';
     }
+    // Tiny build stamp so it's easy to confirm which version is actually live after a
+    // redeploy, without having to guess from behavior alone.
+    html += '<div style="text-align:center;color:var(--muted);font-size:0.62rem;opacity:0.5;margin-top:4px;">' + BUILD_VERSION + '</div>';
 
     app.innerHTML = html;
     if (showRules) app.innerHTML += rulesModalHTML();
+    if (focusedId){
+      var restored = document.getElementById(focusedId);
+      if (restored){
+        restored.focus();
+        if (selStart !== undefined && selEnd !== undefined){
+          try{ restored.setSelectionRange(selStart, selEnd); }catch(e){}
+        }
+      }
+    }
   }
 
   function brandHTML(){
