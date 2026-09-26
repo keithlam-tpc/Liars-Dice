@@ -251,6 +251,13 @@ INDEX_HTML = r"""<!DOCTYPE html>
   }
   .table-center .center-label{ color:var(--muted); font-size:0.72rem; letter-spacing:1px; text-transform:uppercase; font-weight:800; }
   .table-center .center-bid{ font-family:'Baloo 2', sans-serif; color:var(--cream); font-size:1.3rem; margin:2px 0; line-height:1.15; }
+  .table-center .center-bid-visual{ display:flex; align-items:center; justify-content:center; gap:5px; margin:4px 0; }
+  .table-center .center-bid-visual .count-num{ font-family:'Baloo 2', sans-serif; font-size:1.4rem; font-weight:800; color:var(--cream); line-height:1; }
+  .table-center .center-bid-visual .count-x{ font-size:1rem; color:var(--muted); font-weight:700; }
+  .table-center .center-bid-visual .die.center-die{ width:34px; height:34px; padding:5px; }
+  body.is-game .table-center .center-bid-visual{ gap:4px; margin:2px 0; }
+  body.is-game .table-center .center-bid-visual .count-num{ font-size:1.1rem; }
+  body.is-game .table-center .center-bid-visual .die.center-die{ width:26px; height:26px; padding:4px; }
   .table-center .center-stake{
     display:inline-block; margin-top:4px; padding:5px 14px; border-radius:20px;
     background:linear-gradient(90deg, var(--purple), var(--pink)); border:none; color:#fff;
@@ -360,12 +367,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .result-banner .count-visual{ display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:8px; }
   .result-banner .count-visual .count-num{ font-family:'Baloo 2', sans-serif; font-size:2.2rem; font-weight:800; color:var(--cream); line-height:1; }
   .result-banner .count-visual .count-x{ font-size:1.3rem; color:var(--muted); font-weight:700; }
-  .result-banner .count-visual .count-need{ font-family:'Baloo 2', sans-serif; font-size:0.78rem; color:var(--muted); font-weight:700; margin-left:2px; }
+  .result-banner .count-caption{ font-size:0.78rem; color:var(--muted); font-weight:700; margin-bottom:8px; }
   body.is-game .result-banner{ padding:16px 14px; margin-bottom:8px; border-radius:20px; }
   body.is-game .result-banner .big-emoji{ font-size:2.2rem; margin-bottom:2px; }
-  body.is-game .result-banner .count-visual{ gap:6px; margin-bottom:4px; }
+  body.is-game .result-banner .count-visual{ gap:6px; margin-bottom:2px; }
   body.is-game .result-banner .count-visual .count-num{ font-size:1.6rem; }
-  body.is-game .result-banner .count-visual .count-need{ font-size:0.68rem; }
+  body.is-game .result-banner .count-caption{ font-size:0.68rem; margin-bottom:4px; }
   .result-banner .sub{ font-family:'Baloo 2', sans-serif; color:var(--cream); font-size:1.5rem; font-weight:800; line-height:1.3; }
   .result-banner .sub strong{ background:linear-gradient(90deg, var(--gold), var(--pink-bright)); -webkit-background-clip:text; background-clip:text; color:transparent; }
   body.is-game .result-banner .sub{ font-size:1.1rem; }
@@ -408,7 +415,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   /* ---------------- constants ---------------- */
   // Bump this on every delivered change -- shown as a tiny footer stamp so it's easy to
   // confirm which build is actually live after a redeploy (see BUILD_VERSION usage in render()).
-  var BUILD_VERSION = 'build 2026-09-26-8';
+  var BUILD_VERSION = 'build 2026-09-26-10';
   var POLL_MS = 1800;
   var NEXT_ROUND_DELAY = 20000;
   var TURN_SECONDS = 60;
@@ -1618,7 +1625,13 @@ INDEX_HTML = r"""<!DOCTYPE html>
     });
     var mult = currentStakeMultiplier(r);
     var stakeClass = 'center-stake' + (mult >= 4 ? ' hot' : '');
-    var centerBidText = r.currentBid ? describeBid(r.currentBid.quantity, r.currentBid.face) : (r.phase==='rolling' ? 'Rolling\u2026' : 'No bid yet');
+    var centerBidHTML = r.currentBid ?
+      ('<div class="center-bid-visual">' +
+        '<span class="count-num">' + r.currentBid.quantity + '</span>' +
+        '<span class="count-x">\u00d7</span>' +
+        dieHTML(r.currentBid.face, 'center-die') +
+      '</div>') :
+      ('<div class="center-bid">' + (r.phase==='rolling' ? 'Rolling\u2026' : 'No bid yet') + '</div>');
     var zaiForDisplay;
     if (r.phase === 'pi_response' || r.phase === 'reveal'){ zaiForDisplay = r.challenge ? !!r.challenge.zaiActive : false; }
     else if (r.phase === 'roundend'){ zaiForDisplay = r.lastResult ? !!r.lastResult.zaiActive : false; }
@@ -1627,7 +1640,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
         '<div class="table-surface"></div>' +
         '<div class="table-center">' +
           '<div class="center-label">Round ' + r.round + '</div>' +
-          '<div class="center-bid">' + esc(centerBidText) + '</div>' +
+          centerBidHTML +
           (mult > 1 ? ('<div class="' + stakeClass + '">' + mult + ' mouths on the line</div>') : '') +
           (zaiForDisplay ? '<div class="center-zai">\ud83d\udd12 ZAI ACTIVE \u2014 Aces don\u2019t count</div>' : '') +
         '</div>' +
@@ -1893,8 +1906,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
           '<span class="count-num">' + lr.count + '</span>' +
           '<span class="count-x">\u00D7</span>' +
           dieHTML(lr.face) +
-          '<span class="count-need">needed ' + lr.quantity + '</span>' +
         '</div>' +
+        '<div class="count-caption">counted across everyone\u2019s dice \u2014 bid needed ' + lr.quantity + '</div>' +
         '<div class="sub">' + headline + ' \uD83C\uDF7A</div>' +
       '</div>';
       html += '<div class="reveal-list">';
