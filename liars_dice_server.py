@@ -415,7 +415,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   /* ---------------- constants ---------------- */
   // Bump this on every delivered change -- shown as a tiny footer stamp so it's easy to
   // confirm which build is actually live after a redeploy (see BUILD_VERSION usage in render()).
-  var BUILD_VERSION = 'build 2026-09-26-11';
+  var BUILD_VERSION = 'build 2026-09-26-13';
   var POLL_MS = 1800;
   var NEXT_ROUND_DELAY = 20000;
   var TURN_SECONDS = 60;
@@ -426,7 +426,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   // moved it past the rolling phase. After this long without everyone rolling, any
   // other connected player's client will auto-roll on the straggler's behalf so the
   // round can continue.
-  var ROLL_TIMEOUT_MS = 25000;
+  var ROLL_TIMEOUT_MS = 12000;
 
   /* ---------------- session state ---------------- */
   var myId = 'p_' + Math.random().toString(36).slice(2,9);
@@ -579,9 +579,12 @@ INDEX_HTML = r"""<!DOCTYPE html>
       top: (50 + ry*Math.sin(angle)).toFixed(1) + '%'
     };
   }
-  // House rule: every complete group of 5 matching dice (real matches + wild Aces
-  // combined) earns a bonus of +1 to the counted total -- so 5 counts as 6, and
-  // 6 counts as 7 (one bonus from the first completed group of 5).
+  // House rule: within a SINGLE player's own dice, every complete group of 5 matching dice
+  // (real matches + wild Aces combined) earns that player a bonus of +1 towards the total
+  // count -- so a player individually holding 5 matches contributes 6, not 5. This is a
+  // per-player bonus, not a table-wide one: two different players each holding 3 matches
+  // (6 combined) do NOT get a bonus, because neither of them personally completed a group
+  // of 5 on their own dice.
   function applyCountBonus(n){ return n + Math.floor(n / 5); }
   function totalDiceInPlay(r){
     return r.players.filter(function(p){ return p.alive; }).reduce(function(s,p){ return s+p.diceCount; }, 0);
@@ -617,7 +620,11 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var total = totalDiceInPlay(r);
     var otherDice = total - bot.diceCount;
     var p = pMatchFor(cur.face, wasZaiActive);
-    var expectedTotal = applyCountBonus(selfCount + otherDice*p);
+    // The bonus is per player (see applyCountBonus), so only the bot's OWN known matches can
+    // be bumped here -- there's no way to estimate whether some other single player's own
+    // hand happens to complete a personal group of 5, so other players' expected contribution
+    // is left unbonused (a reasonable approximation for a bluffing heuristic).
+    var expectedTotal = applyCountBonus(selfCount) + otherDice*p;
     var ratio = cur.quantity > 0 ? expectedTotal / cur.quantity : 2;
     var rnd = Math.random();
     var wantsChallenge = ratio < 0.75 ? (rnd < 0.8) : (ratio <= 1.3 ? (rnd < 0.25) : (rnd < 0.1));
@@ -660,7 +667,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var total = totalDiceInPlay(r);
     var otherDice = bidder ? (total - bidder.diceCount) : total;
     var p = pMatchFor(face, zaiActive);
-    var ratio = qty > 0 ? applyCountBonus(selfCount + otherDice*p) / qty : 2;
+    var ratio = qty > 0 ? (applyCountBonus(selfCount) + otherDice*p) / qty : 2;
     return ratio > 1.2 && Math.random() < 0.35;
   }
 
@@ -889,6 +896,36 @@ INDEX_HTML = r"""<!DOCTYPE html>
     });
   }
 
+  // Manual host escape hatch: don't make people wait out ROLL_TIMEOUT_MS if the host can
+  // see everyone's real situation better than the timer can (e.g. they know someone's phone
+  // died and isn't coming back this round). Rolls every not-yet-rolled alive player
+  // immediately, regardless of the deadline, and only the host can trigger it.
+  function mHostForceRoll(){
+    return mutate(roomCode, function(draft){
+      if (!draft || draft.phase !== 'rolling') return null;
+      if (draft.hostId !== myId) return null;
+      var rolledAny = false;
+      draft.players.forEach(function(p){
+        if (p.alive && draft.rolledPlayers.indexOf(p.id) === -1){
+          var rr = rollWithRerollRule(p.diceCount);
+          p.dice = rr.dice;
+          if (rr.penalized) p.drinks = (p.drinks || 0) + 1;
+          draft.rolledPlayers.push(p.id);
+          draft.log.push('⏱️ ' + p.name + ' was auto-rolled by the host.');
+          rolledAny = true;
+        }
+      });
+      if (!rolledAny) return draft;
+      var aliveCount = draft.players.filter(function(pl){ return pl.alive; }).length;
+      if (draft.rolledPlayers.length >= aliveCount){
+        draft.phase = 'bidding';
+        draft.turnDeadline = nextDeadline(draft);
+        draft.log.push('All dice rolled. ' + nameOf(draft, draft.currentActor) + ' opens the bidding.');
+      }
+      return draft;
+    });
+  }
+
   // penalized/logLine come from a rollWithRerollRule() done client-side (dice are private
   // pre-reveal, so the reroll itself never touches the server -- only its outcome does).
   function mMarkRolled(penalized, logLine){
@@ -1036,13 +1073,21 @@ INDEX_HTML = r"""<!DOCTYPE html>
     var face = draft.challenge.bid.face, qty = draft.challenge.bid.quantity;
     var multiplier = draft.challenge.multiplier || 1;
     var zaiWasActive = !!draft.challenge.zaiActive;
+    // The bonus is per player, not table-wide: each player's own matches (+ their own wild
+    // Aces) are tallied on their own, rounded up per complete group of 5 within THEIR hand,
+    // and only then added into the table total. A player who alone rolled 3 matches + 2
+    // Aces gets bumped from 5 to 6 for their own contribution; two different players who
+    // each rolled a partial combo that only adds up to 5 combined do not.
     var rawCount = 0;
+    var count = 0;
     aliveIds.forEach(function(id){
+      var personalRaw = 0;
       draft.reveal[id].forEach(function(d){
-        if (d === face || (!zaiWasActive && face !== 1 && d === 1)) rawCount++;
+        if (d === face || (!zaiWasActive && face !== 1 && d === 1)) personalRaw++;
       });
+      rawCount += personalRaw;
+      count += applyCountBonus(personalRaw);
     });
-    var count = applyCountBonus(rawCount);
     var bonus = count - rawCount;
     var bidTrue = count >= qty;
     var loserId = bidTrue ? draft.challenge.challengerId : draft.challenge.bidderId;
@@ -1411,6 +1456,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
     // (no network call -- just redraws using the deadline already in `room`).
     tickTimer = setInterval(function(){
       if (room && (room.phase === 'bidding' || room.phase === 'pi_response') && room.turnDeadline) render();
+      if (room && room.phase === 'rolling' && room.rollDeadline) render();
     }, 1000);
   }
   function stopPolling(){
@@ -1783,10 +1829,19 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
     if (r.phase === 'rolling'){
       var stillRolling = r.players.filter(function(p){ return p.alive && r.rolledPlayers.indexOf(p.id) === -1; });
+      var waitHint = '';
+      if (stillRolling.length){
+        var namesLeft = stillRolling.map(function(p){ return esc(p.name); }).join(', ');
+        var secsToAuto = r.rollDeadline ? Math.max(0, Math.ceil((r.rollDeadline - Date.now())/1000)) : null;
+        waitHint = '<div class="hint" style="margin-top:10px;">Waiting on: ' + namesLeft +
+          (secsToAuto === null ? '' : (secsToAuto > 0 ? (' \u2014 auto-continuing in ' + secsToAuto + 's') : ' \u2014 continuing any moment\u2026')) +
+          '</div>' +
+          (isHostInGame ? '<button class="btn-ghost" data-action="force-roll-stragglers" style="margin-top:8px;">Roll for them now</button>' : '');
+      }
       html += '<div class="panel" style="text-align:center;">' +
         '<div style="color:var(--muted);margin-bottom:12px;">Rolling dice for everyone\u2026</div>' +
         (me ? '<div class="dice-row-real">' + sortedDice(myDice).map(function(d){ return dieHTML(d, flags.rollingAnim ? 'rolling' : ''); }).join('') + '</div>' : '') +
-        (stillRolling.length ? ('<div class="hint" style="margin-top:10px;">Waiting on: ' + stillRolling.map(function(p){ return esc(p.name); }).join(', ') + '</div>') : '') +
+        waitHint +
       '</div>';
       return html;
     }
@@ -2168,6 +2223,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
       var waitSeatIdx = parseInt(el.dataset.seat, 10);
       return mTakeWaitingSeat(waitSeatIdx).then(function(r){ if (r) room = r; render(); });
     }
+    if (action === 'force-roll-stragglers') return mHostForceRoll().then(function(r){ if (r) { room = r; reactToRoom(r); } render(); });
     if (action === 'add-bot') return mAddBot().then(function(r){ if (r) room = r; render(); });
     if (action === 'remove-bot') return mRemoveBot(el.dataset.id).then(function(r){ if (r) room = r; render(); });
     if (action === 'toggle-manage'){ showManagePlayers = !showManagePlayers; render(); return; }
